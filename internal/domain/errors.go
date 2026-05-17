@@ -13,4 +13,5 @@ var (
 	ErrNegativeBalance    = errors.New("operation would result in negative balance")
 
 	ErrDuplicateIdempotencyKey = errors.New("duplicate idempotency key")
+	ErrIdempotencyConflict     = errors.New("idempotency key conflict: request parameters do not match original transaction")
 )

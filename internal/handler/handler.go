@@ -113,6 +113,8 @@ func (h *Handler) CreateTransfer(c *gin.Context) {
 		switch {
 		case errors.Is(err, domain.ErrInsufficientFunds):
 			c.JSON(http.StatusUnprocessableEntity, utils.ErrorResponse(err.Error()))
+		case errors.Is(err, domain.ErrIdempotencyConflict):
+			c.JSON(http.StatusConflict, utils.ErrorResponse(err.Error()))
 		case errors.Is(err, domain.ErrSameWallet),
 			errors.Is(err, domain.ErrInvalidAmount),
 			errors.Is(err, domain.ErrCurrencyMismatch):

@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -85,6 +87,9 @@ func (s *TransferService) Transfer(ctx context.Context, req *TransferRequest) (*
 		if err == nil && cachedVal != "" {
 			var cachedTxn domain.Transaction
 			if err := json.Unmarshal([]byte(cachedVal), &cachedTxn); err == nil {
+				if err := validateIdempotentRequest(req, &cachedTxn); err != nil {
+					return nil, err
+				}
 				return &TransferResponse{Transaction: &cachedTxn}, nil
 			}
 		}
@@ -95,6 +100,9 @@ func (s *TransferService) Transfer(ctx context.Context, req *TransferRequest) (*
 		return nil, fmt.Errorf("idempotency pre-check: %w", err)
 	}
 	if existing != nil {
+		if err := validateIdempotentRequest(req, existing); err != nil {
+			return nil, err
+		}
 		if s.redis != nil {
 			if data, err := json.Marshal(existing); err == nil {
 				_ = s.redis.Set(ctx, redisKey, string(data), 24*time.Hour).Err()
@@ -120,6 +128,18 @@ func (s *TransferService) Transfer(ctx context.Context, req *TransferRequest) (*
 			return fmt.Errorf("lock wallet %d: %w", secondID, err)
 		}
 
+		inner, err := s.txns.GetByIdempotencyKey(ctx, tx, req.IdempotencyKey)
+		if err != nil && !errors.Is(err, domain.ErrTransactionNotFound) {
+			return err
+		}
+		if inner != nil {
+			if err := validateIdempotentRequest(req, inner); err != nil {
+				return err
+			}
+			result = inner
+			return nil
+		}
+
 		var fromWallet, toWallet *domain.Wallet
 		if req.FromWalletID == firstID {
 			fromWallet, toWallet = firstWallet, secondWallet
@@ -137,20 +157,8 @@ func (s *TransferService) Transfer(ctx context.Context, req *TransferRequest) (*
 			return domain.ErrInsufficientFunds
 		}
 
-		inner, err := s.txns.GetByIdempotencyKey(ctx, tx, req.IdempotencyKey)
-		if err != nil && !errors.Is(err, domain.ErrTransactionNotFound) {
-			return err
-		}
-		if inner != nil {
-			result = inner
-			return nil
-		}
-
-		refSuffix := req.IdempotencyKey
-		if len(refSuffix) > 8 {
-			refSuffix = refSuffix[:8]
-		}
-		referenceID := fmt.Sprintf("TXN_%s_%s", time.Now().Format("20060102"), refSuffix)
+		hash := sha256.Sum256([]byte(req.IdempotencyKey))
+		referenceID := fmt.Sprintf("TXN_%s_%s", time.Now().Format("20060102"), hex.EncodeToString(hash[:16]))
 
 		txn, err := s.txns.Create(ctx, tx, &domain.Transaction{
 			IdempotencyKey: req.IdempotencyKey,
@@ -166,6 +174,11 @@ func (s *TransferService) Transfer(ctx context.Context, req *TransferRequest) (*
 		if err != nil {
 			if errors.Is(err, domain.ErrDuplicateIdempotencyKey) {
 				winner, _ := s.txns.GetByIdempotencyKey(ctx, tx, req.IdempotencyKey)
+				if winner != nil {
+					if err := validateIdempotentRequest(req, winner); err != nil {
+						return err
+					}
+				}
 				result = winner
 				return nil
 			}
@@ -203,18 +216,28 @@ func (s *TransferService) Transfer(ctx context.Context, req *TransferRequest) (*
 			return fmt.Errorf("credit ledger entry: %w", err)
 		}
 
-		eventPayload := fmt.Sprintf(
-			`{"transaction_id": %d, "reference_id": "%s", "from_wallet_id": %d, "to_wallet_id": %d, "amount": "%s", "currency": "%s"}`,
-			txn.ID,
-			txn.ReferenceID,
-			txn.FromWalletID,
-			txn.ToWalletID,
-			txn.Amount.String(),
-			txn.Currency,
-		)
+		eventPayload := struct {
+			TransactionID uint64 `json:"transaction_id"`
+			ReferenceID   string `json:"reference_id"`
+			FromWalletID  uint64 `json:"from_wallet_id"`
+			ToWalletID    uint64 `json:"to_wallet_id"`
+			Amount        string `json:"amount"`
+			Currency      string `json:"currency"`
+		}{
+			TransactionID: txn.ID,
+			ReferenceID:   txn.ReferenceID,
+			FromWalletID:  txn.FromWalletID,
+			ToWalletID:    txn.ToWalletID,
+			Amount:        txn.Amount.String(),
+			Currency:      txn.Currency,
+		}
+		eventPayloadBytes, err := json.Marshal(eventPayload)
+		if err != nil {
+			return fmt.Errorf("marshal outbox event payload: %w", err)
+		}
 		if err := s.outbox.Create(ctx, tx, &domain.OutboxEvent{
 			EventType: "TransferCompleted",
-			Payload:   eventPayload,
+			Payload:   string(eventPayloadBytes),
 			Status:    "PENDING",
 		}); err != nil {
 			return fmt.Errorf("write outbox event: %w", err)
@@ -248,4 +271,14 @@ func (s *TransferService) GetTransaction(ctx context.Context, id uint64) (*domai
 
 func (s *TransferService) GetLedger(ctx context.Context, walletID uint64, limit int, cursor uint64) ([]*domain.LedgerEntry, error) {
 	return s.ledger.GetByWalletID(ctx, s.db, walletID, limit, cursor)
+}
+
+func validateIdempotentRequest(req *TransferRequest, txn *domain.Transaction) error {
+	if txn.FromWalletID != req.FromWalletID ||
+		txn.ToWalletID != req.ToWalletID ||
+		!txn.Amount.Equal(req.Amount) ||
+		txn.Currency != req.Currency {
+		return domain.ErrIdempotencyConflict
+	}
+	return nil
 }

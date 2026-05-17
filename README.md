@@ -59,10 +59,10 @@ The API is fully structured under `v1` routes:
    - Every wallet transfer atomically records exactly two matching entries in the `ledger_entries` table: a `DEBIT` against the sender and a `CREDIT` to the receiver.
    - Balances are securely tracked alongside the ledger history, ensuring full auditability where the overall ledger must always balance to zero.
 
-3. **Safe Concurrency & Deadlock Prevention**:
-   - Employs strict database row locking (`SELECT ... FOR UPDATE`).
-   - Locks are acquired in **ascending numeric wallet ID order** for every transfer (e.g. if transferring between 2 and 1, it locks 1 first, then 2). This ascending order serialization completely eliminates resource deadlocks.
-   - Prevents double-spending, balance-skewing, and stale reads under highly concurrent transfer requests.
+3: **Safe Concurrency & Deadlock Prevention**:
+   - Executes each transfer inside a single database transaction. In the SQLite-backed implementation, concurrency control relies on SQLite transaction/write serialization (WAL mode with `sql.LevelSerializable` and single writer thread isolation) rather than row-level `SELECT ... FOR UPDATE` locks.
+   - Wallets are read and updated in **ascending numeric wallet ID order** for every transfer (e.g. if transferring between 2 and 1, it processes 1 first, then 2). This deterministic ordering avoids inconsistent access patterns and preserves a clear migration path to engines (like PostgreSQL) that support explicit row-level locking.
+   - Prevents double-spending, balance-skewing, and stale reads under highly concurrent transfer requests by ensuring debit, credit, balance updates, and ledger writes succeed or fail atomically together.
 
 4. **JSON-Based Configuration**:
    - Application behaviors (database path and server port) are defined in a centralized `config.json` in the root workspace.

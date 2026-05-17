@@ -55,9 +55,10 @@ CREATE TABLE IF NOT EXISTS outbox_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ledger_wallet ON ledger_entries(wallet_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_ledger_wallet_id_desc ON ledger_entries(wallet_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_ledger_txn ON ledger_entries(transaction_id);
 
 -- Seed: two test wallets
-INSERT INTO wallets (user_id, currency, balance) VALUES
+INSERT OR IGNORE INTO wallets (user_id, currency, balance) VALUES
     (1, 'USD', '1000.00000000'),
     (2, 'USD', '500.00000000');

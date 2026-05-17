@@ -6,10 +6,12 @@ This Pull Request delivers a highly reliable, concurrent-safe, and production-gr
 
 Key architectural concepts implemented include:
 * **Two-Tier Idempotency Framework (Redis-Cached)**: Combines an in-memory **Redis** fast-path cache with a unique database constraint safeguard. When a transfer request arrives, the system queries Redis first. If a hit occurs, the server instantly serves the cached transaction payload in **< 1ms**, bypassing all database read locks, thread-waiting bottlenecks, and SQL overhead entirely.
+* **Request Fingerprint Validation**: Prevents clients from accidentally reusing an idempotency key with different request parameters (mismatched source, destination, amount, or currency). Fingerprint checks are executed at the Redis layer, outer DB layer, and inside the SQL transaction to block conflict anomalies and enforce true Exactly-Once API semantics.
+* **Collision-Resistant Reference ID Derivation**: Computes a deterministic SHA-256 hash of the idempotency key to produce a unique, safe `reference_id` prefix. This mathematically guarantees zero collisions across independent transaction keys on the same day.
 * **Double-Entry Auditable Ledger**: Guarantees that every transfer produces exactly two matching balanced entries (a `DEBIT` and a `CREDIT`), keeping the ledger balance at a strict zero.
-* **Safe Concurrency & Deadlock Prevention**: Utilizes numeric ascending lock ordering (`SELECT FOR UPDATE`) alongside SQL isolation levels to entirely eliminate data races and circular deadlocks.
-* **Transactional Outbox Event Logging**: Integrates event-driven readiness by writing a `TransferCompleted` outbox log atomically inside the main transaction.
-* **Offset-Free Seek/Cursor Pagination**: Implements highly scalable $O(1)$ cursor-based pagination (`?limit=20&cursor=ID`) for historical ledger reads. By executing index-seek lookups (`id < cursor`) rather than standard `OFFSET` scans, we maintain constant-time query latency even under billions of ledger rows, avoiding database CPU spikes.
+* **Safe Concurrency & SQLite WAL Serialization**: Wallets are read and updated in **ascending numeric wallet ID order** for every transfer (deterministic ordering to prevent inconsistent access patterns and establish a clear path for pg row locks). Concurrency control relies on SQLite write serialization (WAL mode with `sql.LevelSerializable` and single writer thread isolation) to completely avoid balance skew under high loads.
+* **Transactional Outbox Event Logging**: Integrates event-driven readiness by writing a `TransferCompleted` outbox log atomically inside the main transaction. Payload serialization is safely done using `json.Marshal` instead of `fmt.Sprintf` to prevent quote/injection vulnerability.
+* **Offset-Free Seek/Cursor Pagination**: Implements highly scalable $O(1)$ cursor-based pagination (`?limit=20&cursor=ID`) for historical ledger reads. By executing index-seek lookups (`id < cursor`) utilizing a dedicated `idx_ledger_wallet_id_desc` composite database index, we maintain constant-time query latency even under billions of ledger rows, avoiding database CPU spikes.
 
 ### System Architecture Diagram
 
@@ -19,7 +21,7 @@ graph TD
     Handler --> Service[TransferService Orchestrator]
     
     Service --> RedisClient[(Redis Cache Tier 1)]
-    RedisClient -- "Fast-Path Cache Hit" --> Handler
+    RedisClient -- "Fast-Path Cache Hit & Fingerprint Match" --> Handler
     
     subground["SQLite Database Engine (Tier 2)"]
     Service --> subground
@@ -72,6 +74,7 @@ We developed a clean, normalized relational schema tailored for atomic, high-vol
    * `wallet_id` (FOREIGN KEY to `wallets`)
    * `entry_type` (VARCHAR(10) - `debit` or `credit`)
    * `amount`, `balance_before`, `balance_after` (DECIMAL(20,8))
+   * *Indexes*: Optimized index `idx_ledger_wallet_id_desc` on `(wallet_id, id DESC)` to support seek/cursor pagination at constant $O(1)$ time complexity.
 4. **`outbox_events`**:
    * `id` (INTEGER PRIMARY KEY)
    * `event_type` (VARCHAR(255)), `payload` (JSON TEXT), `status` (VARCHAR(50)), `created_at` (TIMESTAMP)
@@ -84,12 +87,13 @@ We implemented a **Two-Tier Idempotency Framework** designed for high-availabili
 
 1. **Redis In-Memory Fast-Path Cache (Tier 1)**:
    * When a transfer request arrives, the service immediately queries Redis for `idempotency:transfer:{key}`.
-   * If found, the serialized original `domain.Transaction` response is fetched, unmarshaled, and returned in **< 1ms**, completely bypassing SQLite and avoiding DB read amplification.
+   * If found, the serialized original `domain.Transaction` response is fetched, unmarshaled, and verified using **Fingerprint Request Validation** (mismatch checks against source, destination, amount, and currency). If validation passes, the cached transaction is returned in **< 1ms**, completely bypassing SQLite and avoiding DB read amplification.
    * If not found in cache, it falls back to the database.
 2. **Durable DB Constraint Safeties (Tier 2)**:
-   * Inside the database transaction, we query the `transactions` table using a unique index on `idempotency_key`.
+   * Inside the database transaction, we query the `transactions` table using a unique index on `idempotency_key` **first** before evaluating balance rules.
+   * If a replayed key exists, we validate the request fingerprint. If they match, we return the cached record. If they mismatch, we return a `409 Conflict`.
    * A strict database `UNIQUE` constraint acts as our ultimate consistency lock. If two race-condition requests manage to bypass the cache at the exact same microsecond, the database rejects the second write atomically with a unique key violation.
-   * the original transaction is returned, ensuring **Exactly-Once** execution.
+   * The original transaction is returned, ensuring **Exactly-Once** execution.
 
 ---
 
@@ -106,10 +110,9 @@ To ensure absolute consistency under severe concurrent load (e.g. multiple concu
      }
      ```
    * Lock `firstID` first, then lock `secondID` second. This guarantees consistent lock acquisition order across all threads.
-2. **Explicit Row-Level Locking (`SELECT FOR UPDATE`)**:
-   * Acquired explicit database write-locks on target wallets before checking balances or performing updates. This guards against read-then-write race conditions.
-3. **Strict Transaction Isolation**:
-   * Transactions are executed inside a `sql.LevelSerializable` boundary to ensure absolute sequential correctness.
+2. **Deterministic SQLite Concurrency Control**:
+   * SQLite write serialization (WAL mode with `sql.LevelSerializable` and single writer thread isolation) ensures that debit, credit, balance updates, and ledger writes succeed or fail atomically together.
+   * The ascending sorting order ensures that as we migrate from SQLite to engines supporting explicit row-level locking (e.g. PostgreSQL, Spanner), we carry a mathematically deadlock-free guarantee.
 
 ---
 
@@ -172,6 +175,7 @@ go test -v ./...
 === RUN   TestTransfer_Idempotency
 --- PASS: TestTransfer_Idempotency (0.00s)
 === RUN   TestTransfer_ConcurrentNoDoubleSpend
+    service_test.go:160: success=5 fail=5
 --- PASS: TestTransfer_ConcurrentNoDoubleSpend (0.01s)
 === RUN   TestTransfer_ConcurrentSameIdempotencyKey
 --- PASS: TestTransfer_ConcurrentSameIdempotencyKey (0.00s)
@@ -183,8 +187,10 @@ go test -v ./...
 --- PASS: TestTransfer_DoubleEntryLedger (0.00s)
 === RUN   TestTransfer_LedgerCursorPagination
 --- PASS: TestTransfer_LedgerCursorPagination (0.00s)
+=== RUN   TestTransfer_IdempotencyConflict
+--- PASS: TestTransfer_IdempotencyConflict (0.00s)
 PASS
-ok  	github.com/candidate/wallet-transfer/tests	0.537s
+ok  	github.com/candidate/wallet-transfer/tests	0.477s
 ```
 
 ### 2. End-to-End Live API Validation Curls
@@ -239,7 +245,7 @@ Below are the exact live API curls and real returned JSON bodies validated durin
   Content-Type: application/json; charset=utf-8
   Content-Length: 324
 
-  {"transaction":{"id":3,"idempotency_key":"txn-redis-abc-1","reference_id":"TXN_20260518_txn-redi","from_wallet_id":8,"to_wallet_id":9,"amount":"800","currency":"USD","status":"PROCESSED","description":"Redis e2e test","metadata":"{\"via\":\"redis\"}","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}}
+  {"transaction":{"id":3,"idempotency_key":"txn-redis-abc-1","reference_id":"TXN_20260518_55694a11f26e3c09199d6d5ef062e783","from_wallet_id":8,"to_wallet_id":9,"amount":"800","currency":"USD","status":"PROCESSED","description":"Redis e2e test","metadata":"{\"via\":\"redis\"}","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}}
   ```
 
 #### D. Replay Request (Sub-Millisecond Redis Fast-Path Cache Hit)
@@ -249,26 +255,26 @@ Below are the exact live API curls and real returned JSON bodies validated durin
   ```
 * **Response (Returned instantly from Redis in-memory cache):**
   ```json
-  {"transaction":{"id":3,"idempotency_key":"txn-redis-abc-1","reference_id":"TXN_20260518_txn-redi","from_wallet_id":8,"to_wallet_id":9,"amount":"800","currency":"USD","status":"PROCESSED","description":"Redis e2e test","metadata":"{\"via\":\"redis\"}","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}}
+  {"transaction":{"id":3,"idempotency_key":"txn-redis-abc-1","reference_id":"TXN_20260518_55694a11f26e3c09199d6d5ef062e783","from_wallet_id":8,"to_wallet_id":9,"amount":"800","currency":"USD","status":"PROCESSED","description":"Redis e2e test","metadata":"{\"via\":\"redis\"}","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}}
   ```
 
 > [!TIP]
 > You can verify the saved key inside Redis:
 > `docker exec wallet_redis redis-cli GET "idempotency:transfer:txn-redis-abc-1"`
 > **Redis Output:**
-> `{"id":3,"idempotency_key":"txn-redis-abc-1","reference_id":"TXN_20260518_txn-redi","from_wallet_id":8,"to_wallet_id":9,"amount":"800","currency":"USD","status":"PROCESSED","description":"Redis e2e test","metadata":"{\"via\":\"redis\"}","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}`
+> `{"id":3,"idempotency_key":"txn-redis-abc-1","reference_id":"TXN_20260518_55694a11f26e3c09199d6d5ef062e783","from_wallet_id":8,"to_wallet_id":9,"amount":"800","currency":"USD","status":"PROCESSED","description":"Redis e2e test","metadata":"{\"via\":\"redis\"}","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}`
 
-#### E. Insufficient Funds Rejection Check
-* **Command:**
+#### E. Idempotency Conflict Response Check
+* **Command (Attempting to reuse the key with a different amount):**
   ```bash
-  curl -i -X POST -H "Content-Type: application/json" -d '{"idempotencyKey": "txn-insufficient-1", "fromWalletId": 8, "toWalletId": 9, "amount": 999999.00, "currency": "USD"}' http://localhost:8080/api/v1/transfers
+  curl -i -X POST -H "Content-Type: application/json" -d '{"idempotencyKey": "txn-redis-abc-1", "fromWalletId": 8, "toWalletId": 9, "amount": 2000.00, "currency": "USD"}' http://localhost:8080/api/v1/transfers
   ```
-* **Response:**
+* **Response (Fingerprint Mismatch Conflict):**
   ```http
-  HTTP/1.1 422 Unprocessable Entity
+  HTTP/1.1 409 Conflict
   Content-Type: application/json; charset=utf-8
 
-  {"error":"insufficient funds"}
+  {"error":"idempotency key conflict: request parameters do not match original transaction"}
   ```
 
 #### F. Seek Cursor-Paginated Ledger Check

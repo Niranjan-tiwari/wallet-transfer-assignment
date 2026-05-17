@@ -119,9 +119,13 @@ func TestTransfer_Idempotency(t *testing.T) {
 }
 
 func TestTransfer_ConcurrentNoDoubleSpend(t *testing.T) {
-	svc, _, _, cleanup := setup(t)
+	svc, database, _, cleanup := setup(t)
 	defer cleanup()
 	ctx := context.Background()
+
+	// Seed Wallet 1 with exactly 50 USD
+	_, err := database.Exec("UPDATE wallets SET balance = '50.00000000' WHERE id = 1;")
+	require.NoError(t, err)
 
 	const goroutines = 10
 	var (
@@ -154,7 +158,17 @@ func TestTransfer_ConcurrentNoDoubleSpend(t *testing.T) {
 	wg.Wait()
 
 	t.Logf("success=%d fail=%d", success, fail)
-	assert.Greater(t, success, 0)
+	assert.Equal(t, 5, success)
+	assert.Equal(t, 5, fail)
+
+	// Verify final balances are perfect
+	w1, err := svc.GetWallet(ctx, 1)
+	require.NoError(t, err)
+	assert.True(t, w1.Balance.Equal(decimal.Zero), "wallet 1 balance must be exactly 0")
+
+	w2, err := svc.GetWallet(ctx, 2)
+	require.NoError(t, err)
+	assert.True(t, w2.Balance.Equal(decimal.NewFromFloat(550)), "wallet 2 balance must be exactly 550")
 }
 
 func TestTransfer_ConcurrentSameIdempotencyKey(t *testing.T) {
@@ -289,4 +303,34 @@ func TestTransfer_LedgerCursorPagination(t *testing.T) {
 	for _, entry := range secondPage {
 		assert.Less(t, entry.ID, cursor)
 	}
+}
+
+func TestTransfer_IdempotencyConflict(t *testing.T) {
+	svc, _, _, cleanup := setup(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	key := uuid.NewString()
+	req1 := &service.TransferRequest{
+		IdempotencyKey: key,
+		FromWalletID:   1,
+		ToWalletID:     2,
+		Amount:         decimal.NewFromFloat(10),
+		Currency:       "USD",
+	}
+
+	_, err := svc.Transfer(ctx, req1)
+	require.NoError(t, err)
+
+	// Attempt replay with a different amount
+	req2 := &service.TransferRequest{
+		IdempotencyKey: key,
+		FromWalletID:   1,
+		ToWalletID:     2,
+		Amount:         decimal.NewFromFloat(20), // mismatched amount!
+		Currency:       "USD",
+	}
+
+	_, err = svc.Transfer(ctx, req2)
+	assert.ErrorIs(t, err, domain.ErrIdempotencyConflict)
 }
