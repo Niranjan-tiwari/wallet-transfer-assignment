@@ -56,7 +56,7 @@ func (r *WalletRepository) LockByID(ctx context.Context, tx *sql.Tx, id uint64) 
 }
 
 func (r *WalletRepository) UpdateBalance(ctx context.Context, tx *sql.Tx, id uint64, newBalance decimal.Decimal) error {
-	const q = `UPDATE wallets SET balance = ? WHERE id = ?`
+	const q = `UPDATE wallets SET balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
 
 	res, err := tx.ExecContext(ctx, q, newBalance.String(), id)
 	if err != nil {

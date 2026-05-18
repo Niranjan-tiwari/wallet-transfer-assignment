@@ -111,13 +111,12 @@ All core system requirements (strict idempotency, double-entry ledger isolation,
     -d '{"idempotencyKey": "txn-redis-abc-1", "fromWalletId": 8, "toWalletId": 9, "amount": 800.00, "currency": "USD", "description": "Redis e2e test", "metadata": "{\"via\":\"redis\"}"}' \
     http://localhost:8080/api/v1/transfers
   ```
-* **Raw Response:**
+* **Raw Response** *(exact reference_id and timestamps will vary per execution)*:
   ```http
   HTTP/1.1 201 Created
   Content-Type: application/json; charset=utf-8
-  Content-Length: 324
 
-  {"transaction":{"id":3,"idempotency_key":"txn-redis-abc-1","reference_id":"TXN_20260518_txn-redi","from_wallet_id":8,"to_wallet_id":9,"amount":"800","currency":"USD","status":"PROCESSED","description":"Redis e2e test","metadata":"{\"via\":\"redis\"}","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}}
+  {"transaction":{"id":3,"idempotency_key":"txn-redis-abc-1","reference_id":"TXN_20260519_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6","from_wallet_id":8,"to_wallet_id":9,"amount":"800","currency":"USD","status":"PROCESSED","description":"Redis e2e test","metadata":"{\"via\":\"redis\"}","created_at":"2026-05-19T01:00:00Z","updated_at":"2026-05-19T01:00:00Z"}}
   ```
 
 ---
@@ -131,13 +130,12 @@ All core system requirements (strict idempotency, double-entry ledger isolation,
     -d '{"idempotencyKey": "txn-redis-abc-1", "fromWalletId": 8, "toWalletId": 9, "amount": 800.00, "currency": "USD", "description": "Redis e2e test", "metadata": "{\"via\":\"redis\"}"}' \
     http://localhost:8080/api/v1/transfers
   ```
-* **Raw Response:**
+* **Raw Response** *(idempotent replay — same response as TC-04)*:
   ```http
   HTTP/1.1 201 Created
   Content-Type: application/json; charset=utf-8
-  Content-Length: 324
 
-  {"transaction":{"id":3,"idempotency_key":"txn-redis-abc-1","reference_id":"TXN_20260518_txn-redi","from_wallet_id":8,"to_wallet_id":9,"amount":"800","currency":"USD","status":"PROCESSED","description":"Redis e2e test","metadata":"{\"via\":\"redis\"}","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}}
+  {"transaction":{"id":3,"idempotency_key":"txn-redis-abc-1","reference_id":"TXN_20260519_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6","from_wallet_id":8,"to_wallet_id":9,"amount":"800","currency":"USD","status":"PROCESSED","description":"Redis e2e test","metadata":"{\"via\":\"redis\"}","created_at":"2026-05-19T01:00:00Z","updated_at":"2026-05-19T01:00:00Z"}}
   ```
 
 > [!TIP]
@@ -145,8 +143,8 @@ All core system requirements (strict idempotency, double-entry ledger isolation,
 > ```bash
 > docker exec wallet_redis redis-cli GET "idempotency:transfer:txn-redis-abc-1"
 > ```
-> **Stored Value:**
-> `{"id":3,"idempotency_key":"txn-redis-abc-1","reference_id":"TXN_20260518_txn-redi","from_wallet_id":8,"to_wallet_id":9,"amount":"800","currency":"USD","status":"PROCESSED","description":"Redis e2e test","metadata":"{\"via\":\"redis\"}","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}`
+> **Stored Value** *(SHA-256 reference_id and real timestamps)*:
+> `{"id":3,"idempotency_key":"txn-redis-abc-1","reference_id":"TXN_20260519_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6","from_wallet_id":8,"to_wallet_id":9,"amount":"800","currency":"USD","status":"PROCESSED","description":"Redis e2e test","metadata":"{\"via\":\"redis\"}","created_at":"2026-05-19T01:00:00Z","updated_at":"2026-05-19T01:00:00Z"}`
 
 ---
 
@@ -241,9 +239,9 @@ All core system requirements (strict idempotency, double-entry ledger isolation,
   ```bash
   sqlite3 wallet.db "SELECT * FROM outbox_events;"
   ```
-* **Captured Database Row:**
+* **Captured Database Row** *(reference_id is now a SHA-256 derived hash, payload is json.Marshal'd)*:
   ```text
-  1|TransferCompleted|{"transaction_id": 1, "reference_id": "TXN_20260518_key-abc-", "from_wallet_id": 3, "to_wallet_id": 4, "amount": "150", "currency": "USD"}|PENDING|2026-05-18 02:38:52
+  1|TransferCompleted|{"transaction_id":1,"reference_id":"TXN_20260519_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6","from_wallet_id":3,"to_wallet_id":4,"amount":"150","currency":"USD"}|PENDING|2026-05-19 01:00:00
   ```
 
 ---

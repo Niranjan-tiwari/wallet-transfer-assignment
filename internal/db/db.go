@@ -15,7 +15,9 @@ type DB struct {
 
 func New(dsn string) (*DB, error) {
 	if dsn != ":memory:" {
-		dsn = dsn + "?_busy_timeout=5000&_journal_mode=WAL"
+		dsn = dsn + "?_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=on"
+	} else {
+		dsn = ":memory:?_foreign_keys=on"
 	}
 	conn, err := sql.Open("sqlite3", dsn)
 	if err != nil {
@@ -29,6 +31,11 @@ func New(dsn string) (*DB, error) {
 
 	if err := conn.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("db ping: %w", err)
+	}
+
+	// Ensure foreign keys are enforced on every connection (belt-and-suspenders for :memory:)
+	if _, err := conn.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
 
 	return &DB{conn}, nil

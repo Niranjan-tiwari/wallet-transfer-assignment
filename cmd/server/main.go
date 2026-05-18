@@ -26,7 +26,7 @@ func main() {
 		log.Fatalf("connect to database: %v", err)
 	}
 	defer database.Close()
-	log.Println("connected to MySQL")
+	log.Println("connected to SQLite")
 
 	redisClient, err := db.NewRedisClient(cfg.RedisAddr)
 	if err != nil {

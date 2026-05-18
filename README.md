@@ -95,6 +95,7 @@ You can run comprehensive end-to-end integration tests on your local machine usi
 2. **Initialize the local database**:
    ```bash
    sqlite3 wallet.db < migrations/001_init.sql
+   sqlite3 wallet.db < migrations/seed.sql
    ```
 
 3. **Start the Go server**:

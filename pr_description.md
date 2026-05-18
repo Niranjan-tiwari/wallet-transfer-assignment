@@ -139,7 +139,7 @@ To scale this synchronous API from the current template to **10,000+ Requests Pe
 ## How to Run
 
 ### 1. Prerequisites
-Ensure you have **Go 1.22+**, **SQLite3**, and **Docker** installed.
+Ensure you have **Go 1.24+**, **SQLite3**, and **Docker** installed.
 
 ### 2. Spin up Redis
 Spin up the local Redis Docker container to handle the fast-path cache:
@@ -148,9 +148,10 @@ docker run -d --name wallet_redis -p 6379:6379 redis:alpine
 ```
 
 ### 3. Initialize SQL Database
-Import the SQL schema to create SQLite tables:
+Import the SQL schema and seed data to create SQLite tables:
 ```bash
 sqlite3 wallet.db < migrations/001_init.sql
+sqlite3 wallet.db < migrations/seed.sql
 ```
 
 ### 4. Start the Application Server

@@ -43,7 +43,9 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
     balance_after  TEXT NOT NULL,
     created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_ledger_txn    FOREIGN KEY (transaction_id) REFERENCES transactions(id),
-    CONSTRAINT fk_ledger_wallet FOREIGN KEY (wallet_id)      REFERENCES wallets(id)
+    CONSTRAINT fk_ledger_wallet FOREIGN KEY (wallet_id)      REFERENCES wallets(id),
+    CONSTRAINT chk_entry_type   CHECK (entry_type IN ('debit', 'credit')),
+    CONSTRAINT chk_ledger_amount_positive CHECK (CAST(amount AS NUMERIC) > 0)
 );
 
 CREATE TABLE IF NOT EXISTS outbox_events (
@@ -57,8 +59,3 @@ CREATE TABLE IF NOT EXISTS outbox_events (
 CREATE INDEX IF NOT EXISTS idx_ledger_wallet ON ledger_entries(wallet_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_ledger_wallet_id_desc ON ledger_entries(wallet_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_ledger_txn ON ledger_entries(transaction_id);
-
--- Seed: two test wallets
-INSERT OR IGNORE INTO wallets (user_id, currency, balance) VALUES
-    (1, 'USD', '1000.00000000'),
-    (2, 'USD', '500.00000000');

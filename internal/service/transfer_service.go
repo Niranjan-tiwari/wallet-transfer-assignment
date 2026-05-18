@@ -246,9 +246,16 @@ func (s *TransferService) Transfer(ctx context.Context, req *TransferRequest) (*
 		if err := s.txns.UpdateStatus(ctx, tx, txn.ID, domain.StatusCompleted); err != nil {
 			return fmt.Errorf("update status: %w", err)
 		}
-		txn.Status = domain.StatusCompleted
 
-		result = txn
+		// Re-fetch the transaction to capture updated_at set by the database
+		final, err := s.txns.GetByIdempotencyKey(ctx, tx, req.IdempotencyKey)
+		if err != nil {
+			// Fallback to in-memory object if re-fetch fails
+			txn.Status = domain.StatusCompleted
+			result = txn
+			return nil
+		}
+		result = final
 		return nil
 	})
 

@@ -78,9 +78,12 @@ func (h *Handler) GetLedger(c *gin.Context) {
 	limit := utils.QueryInt(c, "limit", 20)
 	var cursor uint64
 	if cursorStr := c.Query("cursor"); cursorStr != "" {
-		if parsed, err := strconv.ParseUint(cursorStr, 10, 64); err == nil {
-			cursor = parsed
+		parsed, err := strconv.ParseUint(cursorStr, 10, 64)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, utils.ErrorResponse("invalid cursor value"))
+			return
 		}
+		cursor = parsed
 	}
 	
 	if limit > 100 {

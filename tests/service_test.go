@@ -31,6 +31,11 @@ func setup(t *testing.T) (*service.TransferService, *db.DB, *redis.Client, func(
 	_, err = database.Exec(string(schema))
 	require.NoError(t, err)
 
+	seed, err := os.ReadFile("../migrations/seed.sql")
+	require.NoError(t, err)
+	_, err = database.Exec(string(seed))
+	require.NoError(t, err)
+
 	redisClient, err := db.NewRedisClient(cfg.RedisAddr)
 	if err == nil && redisClient != nil {
 		ctx := context.Background()
@@ -177,13 +182,15 @@ func TestTransfer_ConcurrentSameIdempotencyKey(t *testing.T) {
 	ctx := context.Background()
 
 	key := uuid.NewString()
+	const goroutines = 5
 	var (
-		wg      sync.WaitGroup
-		mu      sync.Mutex
-		ids     []uint64
+		wg     sync.WaitGroup
+		mu     sync.Mutex
+		ids    []uint64
+		errs   []error
 	)
 
-	for i := 0; i < 5; i++ {
+	for i := 0; i < goroutines; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -194,18 +201,22 @@ func TestTransfer_ConcurrentSameIdempotencyKey(t *testing.T) {
 				Amount:         decimal.NewFromFloat(5),
 				Currency:       "USD",
 			})
-			if err == nil {
-				mu.Lock()
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				errs = append(errs, err)
+			} else {
 				ids = append(ids, resp.Transaction.ID)
-				mu.Unlock()
 			}
 		}()
 	}
 	wg.Wait()
 
-	require.NotEmpty(t, ids)
+	// All goroutines must succeed with zero errors
+	require.Empty(t, errs, "all concurrent replays must succeed, got errors: %v", errs)
+	require.Len(t, ids, goroutines, "all goroutines must return a transaction ID")
 	for _, id := range ids {
-		assert.Equal(t, ids[0], id)
+		assert.Equal(t, ids[0], id, "all goroutines must return the same transaction ID")
 	}
 }
 

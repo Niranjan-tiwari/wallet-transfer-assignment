@@ -46,7 +46,16 @@ func (r *TransactionRepository) Create(ctx context.Context, tx *sql.Tx, t *domai
 
 	id, _ := res.LastInsertId()
 	t.ID = uint64(id)
-	return t, nil
+
+	// Re-fetch the inserted row to populate database-generated created_at/updated_at
+	refetched, err := scanTransaction(tx.QueryRowContext(ctx,
+		`SELECT id, idempotency_key, reference_id, from_wallet_id, to_wallet_id,
+		        amount, currency, status, COALESCE(description,''), COALESCE(metadata,''), created_at, updated_at
+		 FROM   transactions WHERE id = ?`, t.ID))
+	if err != nil {
+		return t, nil // fallback to in-memory object if re-fetch fails
+	}
+	return refetched, nil
 }
 
 func (r *TransactionRepository) GetByID(ctx context.Context, q db.Querier, id uint64) (*domain.Transaction, error) {
@@ -70,7 +79,7 @@ func (r *TransactionRepository) GetByIdempotencyKey(ctx context.Context, q db.Qu
 }
 
 func (r *TransactionRepository) UpdateStatus(ctx context.Context, tx *sql.Tx, id uint64, status domain.TransactionStatus) error {
-	const q = `UPDATE transactions SET status = ? WHERE id = ?`
+	const q = `UPDATE transactions SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
 	_, err := tx.ExecContext(ctx, q, status, id)
 	return err
 }
@@ -112,5 +121,17 @@ func isDuplicateKeyError(err error) bool {
 		return false
 	}
 	msg := err.Error()
-	return strings.Contains(msg, "1062") || strings.Contains(msg, "UNIQUE constraint failed") || strings.Contains(msg, "constraint failed")
+	// Only treat idempotency_key or reference_id UNIQUE violations as duplicates.
+	// Do NOT conflate CHECK or foreign key constraint failures.
+	if strings.Contains(msg, "UNIQUE constraint failed: transactions.idempotency_key") {
+		return true
+	}
+	if strings.Contains(msg, "UNIQUE constraint failed: transactions.reference_id") {
+		return true
+	}
+	// MySQL error code 1062 for duplicate entry
+	if strings.Contains(msg, "1062") {
+		return true
+	}
+	return false
 }
