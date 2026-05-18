@@ -252,7 +252,7 @@ Below are the exact live API curls and real returned JSON bodies validated durin
   Content-Type: application/json; charset=utf-8
   Content-Length: 324
 
-  {"transaction":{"id":3,"idempotency_key":"txn-redis-abc-1","reference_id":"TXN_20260518_55694a11f26e3c09199d6d5ef062e783","from_wallet_id":8,"to_wallet_id":9,"amount":"800","currency":"USD","status":"PROCESSED","description":"Redis e2e test","metadata":"{\"via\":\"redis\"}","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}}
+  {"transaction":{"id":3,"idempotency_key":"txn-redis-abc-1","reference_id":"TXN_20260519_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6","from_wallet_id":8,"to_wallet_id":9,"amount":"800","currency":"USD","status":"PROCESSED","description":"Redis e2e test","metadata":"{\"via\":\"redis\"}","created_at":"2026-05-19T01:00:00Z","updated_at":"2026-05-19T01:00:00Z"}}
   ```
 
 #### D. Replay Request (Sub-Millisecond Redis Fast-Path Cache Hit)
@@ -262,14 +262,14 @@ Below are the exact live API curls and real returned JSON bodies validated durin
   ```
 * **Response (Returned instantly from Redis in-memory cache):**
   ```json
-  {"transaction":{"id":3,"idempotency_key":"txn-redis-abc-1","reference_id":"TXN_20260518_55694a11f26e3c09199d6d5ef062e783","from_wallet_id":8,"to_wallet_id":9,"amount":"800","currency":"USD","status":"PROCESSED","description":"Redis e2e test","metadata":"{\"via\":\"redis\"}","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}}
+  {"transaction":{"id":3,"idempotency_key":"txn-redis-abc-1","reference_id":"TXN_20260519_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6","from_wallet_id":8,"to_wallet_id":9,"amount":"800","currency":"USD","status":"PROCESSED","description":"Redis e2e test","metadata":"{\"via\":\"redis\"}","created_at":"2026-05-19T01:00:00Z","updated_at":"2026-05-19T01:00:00Z"}}
   ```
 
 > [!TIP]
 > You can verify the saved key inside Redis:
 > `docker exec wallet_redis redis-cli GET "idempotency:transfer:txn-redis-abc-1"`
 > **Redis Output:**
-> `{"id":3,"idempotency_key":"txn-redis-abc-1","reference_id":"TXN_20260518_55694a11f26e3c09199d6d5ef062e783","from_wallet_id":8,"to_wallet_id":9,"amount":"800","currency":"USD","status":"PROCESSED","description":"Redis e2e test","metadata":"{\"via\":\"redis\"}","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}`
+> `{"id":3,"idempotency_key":"txn-redis-abc-1","reference_id":"TXN_20260519_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6","from_wallet_id":8,"to_wallet_id":9,"amount":"800","currency":"USD","status":"PROCESSED","description":"Redis e2e test","metadata":"{\"via\":\"redis\"}","created_at":"2026-05-19T01:00:00Z","updated_at":"2026-05-19T01:00:00Z"}`
 
 #### E. Idempotency Conflict Response Check
 * **Command (Attempting to reuse the key with a different amount):**
