@@ -10,14 +10,22 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/candidate/wallet-transfer/docs"
 	"github.com/candidate/wallet-transfer/internal/config"
 	"github.com/candidate/wallet-transfer/internal/db"
 	"github.com/candidate/wallet-transfer/internal/handler"
 	"github.com/candidate/wallet-transfer/internal/repository"
 	"github.com/candidate/wallet-transfer/internal/service"
 	"github.com/gin-gonic/gin"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
+// @title           Wallet Transfer API
+// @version         1.0
+// @description     Production-grade, concurrent-safe, and idempotent Wallet Transfer Service in Go.
+// @host            localhost:8080
+// @BasePath        /api/v1
 func main() {
 	cfg := config.Load()
 
@@ -49,6 +57,8 @@ func main() {
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	h.RegisterRoutes(r)
 	srv := &http.Server{

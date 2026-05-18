@@ -160,6 +160,12 @@ Run the compiled server executable locally on port `8080`:
 go run cmd/server/main.go
 ```
 
+### 5. Access Interactive Swagger API Documentation
+Open your browser and navigate to the live OpenAPI specification UI:
+```text
+http://localhost:8080/swagger/index.html
+```
+
 ---
 
 ## How to Test & Verification Outputs

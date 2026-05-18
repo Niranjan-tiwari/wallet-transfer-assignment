@@ -36,6 +36,31 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	}
 }
 
+type WalletResponse struct {
+	Wallet *domain.Wallet `json:"wallet"`
+}
+
+type LedgerResponse struct {
+	Entries    []*domain.LedgerEntry `json:"entries"`
+	Limit      int                   `json:"limit"`
+	NextCursor uint64                `json:"next_cursor"`
+}
+
+type ErrorResponse struct {
+	Error string `json:"error"`
+}
+
+// CreateWallet godoc
+// @Summary      Create a new wallet
+// @Description  Creates a new multi-currency wallet for a user initialized with 0 balance.
+// @Tags         wallets
+// @Accept       json
+// @Produce      json
+// @Param        request body service.CreateWalletRequest true "Wallet creation request"
+// @Success      201 {object} WalletResponse
+// @Failure      400 {object} ErrorResponse "Bad Request"
+// @Failure      500 {object} ErrorResponse "Internal Server Error"
+// @Router       /wallets [post]
 func (h *Handler) CreateWallet(c *gin.Context) {
 	var req service.CreateWalletRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -51,6 +76,17 @@ func (h *Handler) CreateWallet(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"wallet": wallet})
 }
 
+// GetWallet godoc
+// @Summary      Get wallet by ID
+// @Description  Retrieves wallet details and current balance.
+// @Tags         wallets
+// @Produce      json
+// @Param        id path int true "Wallet ID"
+// @Success      200 {object} WalletResponse
+// @Failure      400 {object} ErrorResponse "Bad Request"
+// @Failure      404 {object} ErrorResponse "Not Found"
+// @Failure      500 {object} ErrorResponse "Internal Server Error"
+// @Router       /wallets/{id} [get]
 func (h *Handler) GetWallet(c *gin.Context) {
 	id, err := utils.ParseUint(c, "id")
 	if err != nil {
@@ -69,6 +105,18 @@ func (h *Handler) GetWallet(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"wallet": wallet})
 }
 
+// GetLedger godoc
+// @Summary      Get wallet ledger entries
+// @Description  Retrieves paginated double-entry ledger history for a wallet using cursor pagination.
+// @Tags         wallets
+// @Produce      json
+// @Param        id path int true "Wallet ID"
+// @Param        limit query int false "Page limit (max 100)" default(20)
+// @Param        cursor query int false "Pagination cursor (entry ID)"
+// @Success      200 {object} LedgerResponse
+// @Failure      400 {object} ErrorResponse "Bad Request"
+// @Failure      500 {object} ErrorResponse "Internal Server Error"
+// @Router       /wallets/{id}/ledger [get]
 func (h *Handler) GetLedger(c *gin.Context) {
 	id, err := utils.ParseUint(c, "id")
 	if err != nil {
@@ -104,6 +152,20 @@ func (h *Handler) GetLedger(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"entries": entries, "limit": limit, "next_cursor": nextCursor})
 }
 
+// CreateTransfer godoc
+// @Summary      Create a wallet transfer
+// @Description  Performs an atomic, idempotent transfer between two wallets with exactly-once guarantees.
+// @Tags         transfers
+// @Accept       json
+// @Produce      json
+// @Param        request body service.TransferRequest true "Transfer request payload"
+// @Success      201 {object} service.TransferResponse
+// @Failure      400 {object} ErrorResponse "Bad Request (Same wallet, invalid amount, currency mismatch)"
+// @Failure      404 {object} ErrorResponse "Wallet Not Found"
+// @Failure      409 {object} ErrorResponse "Idempotency Conflict"
+// @Failure      422 {object} ErrorResponse "Insufficient Funds"
+// @Failure      500 {object} ErrorResponse "Internal Server Error"
+// @Router       /transfers [post]
 func (h *Handler) CreateTransfer(c *gin.Context) {
 	var req service.TransferRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -134,6 +196,17 @@ func (h *Handler) CreateTransfer(c *gin.Context) {
 	c.JSON(status, resp)
 }
 
+// GetTransfer godoc
+// @Summary      Get transfer transaction by ID
+// @Description  Retrieves transaction details, status, and metadata.
+// @Tags         transfers
+// @Produce      json
+// @Param        id path int true "Transaction ID"
+// @Success      200 {object} service.TransferResponse
+// @Failure      400 {object} ErrorResponse "Bad Request"
+// @Failure      404 {object} ErrorResponse "Not Found"
+// @Failure      500 {object} ErrorResponse "Internal Server Error"
+// @Router       /transfers/{id} [get]
 func (h *Handler) GetTransfer(c *gin.Context) {
 	id, err := utils.ParseUint(c, "id")
 	if err != nil {

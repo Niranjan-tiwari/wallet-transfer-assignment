@@ -103,7 +103,13 @@ You can run comprehensive end-to-end integration tests on your local machine usi
    go run cmd/server/main.go
    ```
 
-4. **Check the complete local curls & results**:
+4. **Explore Interactive Swagger API Documentation**:
+   Open your browser and navigate to:
+   ```text
+   http://localhost:8080/swagger/index.html
+   ```
+
+5. **Check the complete local curls & results**:
    Refer to our detailed [Local End-to-End Test Report](./e2e_test_report.md) for step-by-step curls, replays, health status, Redis caching checks, and double-entry ledger pagination.
 
 ---
